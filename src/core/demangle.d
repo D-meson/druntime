@@ -31,6 +31,9 @@ private struct NoHooks
     // static char[] parseType(ref Demangle, char[])
 }
 
+version (LDC) private enum isLDC = true;
+else          private enum isLDC = false;
+
 private struct Demangle(Hooks = NoHooks, size_t checkDstSize = 0)
 {
     // NOTE: This implementation currently only works with mangled function
@@ -104,7 +107,8 @@ pure @safe:
 
         //throw new ParseException( msg );
         debug(info) printf( "error: %.*s\n", cast(int) msg.length, msg.ptr );
-        throw __ctfe ? new ParseException(msg)
+        throw __ctfe ? new ParseException(msg) :
+              isLDC  ? cast(ParseException) __traits(initSymbol, ParseException).ptr
                      : cast(ParseException) cast(void*) typeid(ParseException).initializer;
 
     }
@@ -116,7 +120,8 @@ pure @safe:
 
         //throw new OverflowException( msg );
         debug(info) printf( "overflow: %.*s\n", cast(int) msg.length, msg.ptr );
-        throw cast(OverflowException) cast(void*) typeid(OverflowException).initializer;
+        throw isLDC ? cast(OverflowException) __traits(initSymbol, OverflowException).ptr
+                    : cast(OverflowException) cast(void*) typeid(OverflowException).initializer;
     }
 
 
@@ -1473,6 +1478,12 @@ pure @safe:
             }
             put( ')' );
             return;
+        case 'f':
+            // f MangledName
+            // A function literal symbol
+            popFront();
+            parseMangledName(false, 1);
+            return;
         default:
             error();
         }
@@ -2517,6 +2528,8 @@ version(none)
          "pure @safe int std.format.getNth!(\"integer width\", std.traits.isIntegral, int, uint, uint).getNth(uint, uint, uint)"],
         ["_D3std11parallelism42__T16RoundRobinBufferTDFKAaZvTDxFNaNdNeZbZ16RoundRobinBuffer5primeMFZv",
          "void std.parallelism.RoundRobinBuffer!(void delegate(ref char[]), bool delegate() pure @property @trusted const).RoundRobinBuffer.prime()"],
+        ["_D6mangle__T8fun21753VSQv6S21753S1f_DQBj10__lambda71MFNaNbNiNfZvZQCbQp",
+        "void function() pure nothrow @nogc @safe mangle.fun21753!(mangle.S21753(mangle.__lambda71())).fun21753"],
         // Lname '0'
         ["_D3std9algorithm9iteration__T9MapResultSQBmQBlQBe005stripTAAyaZQBi7opSliceMFNaNbNiNfmmZSQDiQDhQDa__TQCtSQDyQDxQDq00QCmTQCjZQDq",
          "pure nothrow @nogc @safe std.algorithm.iteration.MapResult!(std.algorithm.iteration.__anonymous.strip, "

@@ -1,17 +1,11 @@
 /**
  * Contains the garbage collector implementation.
  *
- * Copyright: Copyright Digital Mars 2001 - 2016.
+ * Copyright: D Language Foundation 2001 - 2021.
  * License:   $(HTTP www.boost.org/LICENSE_1_0.txt, Boost License 1.0).
  * Authors:   Walter Bright, David Friedman, Sean Kelly
  */
-
-/*          Copyright Digital Mars 2005 - 2016.
- * Distributed under the Boost Software License, Version 1.0.
- *    (See accompanying file LICENSE or copy at
- *          http://www.boost.org/LICENSE_1_0.txt)
- */
-module gc.impl.conservative.gc;
+module core.internal.gc.impl.conservative.gc;
 
 // D Programming Language Garbage Collector implementation
 
@@ -35,8 +29,8 @@ module gc.impl.conservative.gc;
 /***************************************************/
 version = COLLECT_PARALLEL;  // parallel scanning
 
-import gc.bits;
-import gc.os;
+import core.internal.gc.bits;
+import core.internal.gc.os;
 import core.gc.config;
 import core.gc.gcinterface;
 
@@ -121,19 +115,13 @@ extern(C) pragma(crt_constructor) void _d_register_precise_gc()
 
 private GC initialize()
 {
-    import core.stdc.string: memcpy;
+    import core.lifetime : emplace;
 
-    auto p = cstdlib.malloc(__traits(classInstanceSize, ConservativeGC));
-
-    if (!p)
+    auto gc = cast(ConservativeGC) cstdlib.malloc(__traits(classInstanceSize, ConservativeGC));
+    if (!gc)
         onOutOfMemoryErrorNoGC();
 
-    auto init = typeid(ConservativeGC).initializer();
-    assert(init.length == __traits(classInstanceSize, ConservativeGC));
-    auto instance = cast(ConservativeGC) memcpy(p, init.ptr, init.length);
-    instance.__ctor();
-
-    return instance;
+    return emplace(gc);
 }
 
 private GC initialize_precise()
@@ -1245,7 +1233,7 @@ struct Gcx
     debug(INVARIANT) bool inCollection;
     uint disabled; // turn off collections if >0
 
-    import gc.pooltable;
+    import core.internal.gc.pooltable;
     private @property size_t npools() pure const nothrow { return pooltable.length; }
     PoolTable!Pool pooltable;
 

@@ -160,15 +160,9 @@ else version (CRuntime_Abstract)
 else
 {
     ///
-    @property int errno() { return getErrno(); }
+    extern(C) pragma(mangle, "getErrno") @property int errno();
     ///
-    @property int errno(int n) { return setErrno(n); }
-
-    extern (C)
-    {
-        private int getErrno();      // for internal use
-        private int setErrno(int);   // for internal use
-    }
+    extern(C) pragma(mangle, "setErrno") @property int errno(int n);
 }
 
 extern (C):
@@ -1536,7 +1530,11 @@ else version (OpenBSD)
     enum EIDRM              = 89;       /// Identifier removed
     enum ENOMSG             = 90;       /// No message of desired type
     enum ENOTSUP            = 91;       /// Not supported
-    enum ELAST              = 91;       /// Must be equal largest errno
+    enum EBADMSG            = 92;       /// Bad message
+    enum ENOTRECOVERABLE    = 93;       /// State not recoverable
+    enum EOWNERDEAD         = 94;       /// Previous owner died
+    enum EPROTO             = 95;       /// Protocol error
+    enum ELAST              = 95;       /// Must be equal largest errno
 }
 else version (DragonFlyBSD)
 {

@@ -1,6 +1,6 @@
 project('druntime', ['d', 'c'])
 
-src = [
+src = files(
     'src/core/bitop.d',
     'src/core/cpuid.d',
     'src/core/gc/config.d',
@@ -12,9 +12,16 @@ src = [
     'src/core/internal/array/capacity.d',
     'src/core/internal/array/equality.d',
     'src/core/internal/array/utils.d',
+    'src/core/internal/backtrace/unwind.d',
     'src/core/internal/container/common.d',
     'src/core/internal/container/treap.d',
     'src/core/internal/entrypoint.d',
+    'src/core/internal/gc/bits.d',
+    'src/core/internal/gc/impl/conservative/gc.d',
+    'src/core/internal/gc/impl/manual/gc.d',
+    'src/core/internal/gc/impl/proto/gc.d',
+    'src/core/internal/gc/os.d',
+    'src/core/internal/gc/proxy.d',
     'src/core/internal/lifetime.d',
     'src/core/internal/parseoptions.d',
     'src/core/internal/qsort.d',
@@ -42,12 +49,6 @@ src = [
     'src/core/stdc/stdint.d',
     'src/core/stdc/stdio.d',
     'src/core/stdc/wchar_.d',
-    'src/gc/bits.d',
-    'src/gc/impl/conservative/gc.d',
-    'src/gc/impl/manual/gc.d',
-    'src/gc/impl/proto/gc.d',
-    'src/gc/os.d',
-    'src/gc/proxy.d',
     'src/object.d',
     'src/rt/adi.d',
     'src/rt/aaA.d',
@@ -68,14 +69,13 @@ src = [
     'src/rt/monitor_.d',
     'src/rt/profilegc.d',
     'src/rt/tlsgc.d',
-    'src/rt/unwind.d',
     'src/rt/util/typeinfo.d',
     'src/rt/sections.d',
     'src/rt/sections_android.d',
     'src/rt/sections_elf_shared.d',
     'src/rt/sections_ldc.d',
     'src/rt/sections_osx_x86.d',
-]
+)
 
 ldc_specific = [
     'src/ldc/sanitizers_optionally_linked.d',

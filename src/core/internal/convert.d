@@ -572,11 +572,6 @@ private Float denormalizedMantissa(T)(T x, uint sign) if (floatFormat!T == Float
         testNumberConvert!("real.min_normal/19");
         testNumberConvert!("real.min_normal/17");
 
-        /**Test imaginary values: convert algorithm is same with real values*/
-        testNumberConvert!("0.0Fi");
-        testNumberConvert!("0.0i");
-        testNumberConvert!("0.0Li");
-
         /**True random values*/
         testNumberConvert!("-0x9.0f7ee55df77618fp-13829L");
         testNumberConvert!("0x7.36e6e2640120d28p+8797L");
@@ -746,6 +741,8 @@ const(ubyte)[] toUbyte(T)(const ref T val) if (is(T == __vector))
     }
 }
 
+// @@@DEPRECATED_2022-02@@@
+deprecated
 @trusted pure nothrow @nogc
 const(ubyte)[] toUbyte(T)(const ref T val) if (__traits(isFloating, T) && is(T : creal))
 {
@@ -772,7 +769,7 @@ const(ubyte)[] toUbyte(T)(const ref T val) if (is(T == enum))
     if (__ctfe)
     {
         static if (is(T V == enum)){}
-        return toUbyte(cast(const V) val);
+        return toUbyte(*cast(const V*) &val);
     }
     else
     {
@@ -804,7 +801,7 @@ const(ubyte)[] toUbyte(T)(const ref T val) if (is(T == delegate) || is(T : V*, V
 }
 
 @trusted pure nothrow @nogc
-const(ubyte)[] toUbyte(T)(const ref T val) if (is(T == struct) || is(T == union))
+const(ubyte)[] toUbyte(T)(const ref return scope T val) if (is(T == struct) || is(T == union))
 {
     if (__ctfe)
     {

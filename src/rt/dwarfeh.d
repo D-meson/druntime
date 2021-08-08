@@ -17,7 +17,7 @@ version (Windows){}
 else:
 
 import rt.dmain2: _d_print_throwable;
-import rt.unwind;
+import core.internal.backtrace.unwind;
 import core.stdc.stdio;
 import core.stdc.stdlib;
 
@@ -352,7 +352,8 @@ extern(C) void _d_throw_exception(Throwable o)
              * since otherwise everything is enclosed by a top-level
              * try/catch.
              */
-            fprintf(stderr, "uncaught exception\n");
+            fprintf(stderr, "%s:%d: uncaught exception reached top of stack\n", __FILE__.ptr, __LINE__);
+            fprintf(stderr, "This might happen if you're missing a top level catch in your fiber or signal handler\n");
             /**
             As _d_print_throwable() itself may throw multiple times when calling core.demangle,
             and with the uncaught exception still on the EH stack, this doesn't bode well with core.demangle's error recovery.

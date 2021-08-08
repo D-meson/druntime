@@ -321,16 +321,19 @@ class Thread : ThreadBase
         }
         else version (Posix)
         {
-            version (LDC)
+            if (m_addr != m_addr.init)
             {
-                // don't detach the main thread, TSan doesn't like it:
-                // https://github.com/ldc-developers/ldc/issues/3519
-                if (!isMainThread())
+                version (LDC)
+                {
+                    // don't detach the main thread, TSan doesn't like it:
+                    // https://github.com/ldc-developers/ldc/issues/3519
+                    if (!isMainThread())
+                        pthread_detach( m_addr );
+                }
+                else
+                {
                     pthread_detach( m_addr );
-            }
-            else
-            {
-                pthread_detach( m_addr );
+                }
             }
             m_addr = m_addr.init;
         }
@@ -402,6 +405,17 @@ class Thread : ThreadBase
         {
             uint[16]        m_reg; // r0-r15
         }
+        else version (PPC)
+        {
+            // Make the assumption that we only care about non-fp and non-vr regs.
+            // ??? : it seems plausible that a valid address can be copied into a VR.
+            uint[32]        m_reg; // r0-31
+        }
+        else version (PPC64)
+        {
+            // As above.
+            ulong[32]       m_reg; // r0-31
+        }
         else
         {
             static assert(false, "Architecture not supported." );
@@ -452,6 +466,12 @@ class Thread : ThreadBase
                 onThreadError( "Error initializing thread stack size" );
         }
 
+        version (Shared)
+        {
+            auto ps = cast(void**).malloc(2 * size_t.sizeof);
+            if (ps is null) onOutOfMemoryError();
+        }
+
         version (Windows)
         {
             // NOTE: If a thread is just executing DllMain()
@@ -464,7 +484,11 @@ class Thread : ThreadBase
             // Solution: Create the thread in suspended state and then
             //       add and resume it with slock acquired
             assert(m_sz <= uint.max, "m_sz must be less than or equal to uint.max");
-            m_hndl = cast(HANDLE) _beginthreadex( null, cast(uint) m_sz, &thread_entryPoint, cast(void*) this, CREATE_SUSPENDED, &m_addr );
+            version (Shared)
+                auto threadArg = cast(void*) ps;
+            else
+                auto threadArg = cast(void*) this;
+            m_hndl = cast(HANDLE) _beginthreadex( null, cast(uint) m_sz, &thread_entryPoint, threadArg, CREATE_SUSPENDED, &m_addr );
             if ( cast(size_t) m_hndl == 0 )
                 onThreadError( "Error creating thread" );
         }
@@ -475,28 +499,36 @@ class Thread : ThreadBase
             ++nAboutToStart;
             pAboutToStart = cast(ThreadBase*)realloc(pAboutToStart, Thread.sizeof * nAboutToStart);
             pAboutToStart[nAboutToStart - 1] = this;
-            version (Windows)
-            {
-                if ( ResumeThread( m_hndl ) == -1 )
-                    onThreadError( "Error resuming thread" );
-            }
-            else version (Posix)
+
+            version (Posix)
             {
                 // NOTE: This is also set to true by thread_entryPoint, but set it
                 //       here as well so the calling thread will see the isRunning
                 //       state immediately.
                 atomicStore!(MemoryOrder.raw)(m_isRunning, true);
                 scope( failure ) atomicStore!(MemoryOrder.raw)(m_isRunning, false);
+            }
 
-                version (Shared)
+            version (Shared)
+            {
+                auto libs = externDFunc!("rt.sections_elf_shared.pinLoadedLibraries",
+                                         void* function() @nogc nothrow)();
+
+                ps[0] = cast(void*)this;
+                ps[1] = cast(void*)libs;
+
+                version (Windows)
                 {
-                    auto libs = externDFunc!("rt.sections_elf_shared.pinLoadedLibraries",
-                                             void* function() @nogc nothrow)();
-
-                    auto ps = cast(void**).malloc(2 * size_t.sizeof);
-                    if (ps is null) onOutOfMemoryError();
-                    ps[0] = cast(void*)this;
-                    ps[1] = cast(void*)libs;
+                    if ( ResumeThread( m_hndl ) == -1 )
+                    {
+                        externDFunc!("rt.sections_elf_shared.unpinLoadedLibraries",
+                                     void function(void*) @nogc nothrow)(libs);
+                        .free(ps);
+                        onThreadError( "Error resuming thread" );
+                    }
+                }
+                else version (Posix)
+                {
                     if ( pthread_create( &m_addr, &attr, &thread_entryPoint, ps ) != 0 )
                     {
                         externDFunc!("rt.sections_elf_shared.unpinLoadedLibraries",
@@ -505,14 +537,27 @@ class Thread : ThreadBase
                         onThreadError( "Error creating thread" );
                     }
                 }
-                else
+            }
+            else
+            {
+                version (Windows)
+                {
+                    if ( ResumeThread( m_hndl ) == -1 )
+                        onThreadError( "Error resuming thread" );
+                }
+                else version (Posix)
                 {
                     if ( pthread_create( &m_addr, &attr, &thread_entryPoint, cast(void*) this ) != 0 )
                         onThreadError( "Error creating thread" );
                 }
+            }
+
+            version (Posix)
+            {
                 if ( pthread_attr_destroy( &attr ) != 0 )
                     onThreadError( "Error destroying thread attributes" );
             }
+
             version (Darwin)
             {
                 m_tmach = pthread_mach_thread_np( m_addr );
@@ -544,7 +589,7 @@ class Thread : ThreadBase
     {
         version (Windows)
         {
-            if ( WaitForSingleObject( m_hndl, INFINITE ) != WAIT_OBJECT_0 )
+            if ( m_addr != m_addr.init && WaitForSingleObject( m_hndl, INFINITE ) != WAIT_OBJECT_0 )
                 throw new ThreadException( "Unable to join thread" );
             // NOTE: m_addr must be cleared before m_hndl is closed to avoid
             //       a race condition with isRunning. The operation is done
@@ -555,7 +600,7 @@ class Thread : ThreadBase
         }
         else version (Posix)
         {
-            if ( pthread_join( m_addr, null ) != 0 )
+            if ( m_addr != m_addr.init && pthread_join( m_addr, null ) != 0 )
                 throw new ThreadException( "Unable to join thread" );
             // NOTE: pthread_join acts as a substitute for pthread_detach,
             //       which is normally called by the dtor.  Setting m_addr
@@ -1003,7 +1048,7 @@ class Thread : ThreadBase
     }
 }
 
-private Thread toThread(ThreadBase t) @trusted nothrow @nogc pure
+private Thread toThread(return scope ThreadBase t) @trusted nothrow @nogc pure
 {
     return cast(Thread) cast(void*) t;
 }
@@ -1521,14 +1566,6 @@ in (fn)
     fn(sp);
 }
 
-version (Solaris)
-{
-    import core.sys.solaris.sys.priocntl;
-    import core.sys.solaris.sys.types;
-    import core.sys.posix.sys.wait : idtype_t;
-}
-
-
 version (Windows)
 private extern (D) void scanWindowsOnly(scope ScanAllThreadsTypeFn scan, ThreadBase _t) nothrow
 {
@@ -1913,6 +1950,28 @@ private extern (D) bool suspend( Thread t ) nothrow @nogc
             t.m_reg[14] = state.lr;
             t.m_reg[15] = state.pc;
         }
+        else version (PPC)
+        {
+            ppc_thread_state_t state = void;
+            mach_msg_type_number_t count = PPC_THREAD_STATE_COUNT;
+
+            if (thread_get_state(t.m_tmach, PPC_THREAD_STATE, &state, &count) != KERN_SUCCESS)
+                onThreadError("Unable to load thread state");
+            if (!t.m_lock)
+                t.m_curr.tstack = cast(void*) state.r[1];
+            t.m_reg[] = state.r[];
+        }
+        else version (PPC64)
+        {
+            ppc_thread_state64_t state = void;
+            mach_msg_type_number_t count = PPC_THREAD_STATE64_COUNT;
+
+            if (thread_get_state(t.m_tmach, PPC_THREAD_STATE64, &state, &count) != KERN_SUCCESS)
+                onThreadError("Unable to load thread state");
+            if (!t.m_lock)
+                t.m_curr.tstack = cast(void*) state.r[1];
+            t.m_reg[] = state.r[];
+        }
         else
         {
             static assert(false, "Architecture not supported." );
@@ -2182,7 +2241,9 @@ extern (C) void thread_init() @nogc
         status = sem_init( &suspendCount, 0, 0 );
         assert( status == 0 );
     }
-    if (typeid(Thread).initializer.ptr)
+    version (LDC)
+        _mainThreadStore[] = __traits(initSymbol, Thread)[];
+    else if (typeid(Thread).initializer.ptr)
         _mainThreadStore[] = typeid(Thread).initializer[];
     Thread.sm_main = attachThread((cast(Thread)_mainThreadStore.ptr).__ctor());
 }
@@ -2223,8 +2284,25 @@ else version (Windows)
         //
         extern (Windows) uint thread_entryPoint( void* arg ) nothrow
         {
-            Thread  obj = cast(Thread) arg;
+            version (Shared)
+            {
+                Thread obj = cast(Thread)(cast(void**)arg)[0];
+                auto loadedLibraries = (cast(void**)arg)[1];
+                .free(arg);
+            }
+            else
+            {
+                Thread obj = cast(Thread)arg;
+            }
             assert( obj );
+
+            // loadedLibraries need to be inherited from parent thread
+            // before initilizing GC for TLS (rt_tlsgc_init)
+            version (Shared)
+            {
+                externDFunc!("rt.sections_elf_shared.inheritLoadedLibraries",
+                             void function(void*) @nogc nothrow)(loadedLibraries);
+            }
 
             obj.initDataStorage();
 
@@ -2269,6 +2347,11 @@ else version (Windows)
                     append( t );
                 }
                 rt_moduleTlsDtor();
+                version (Shared)
+                {
+                    externDFunc!("rt.sections_elf_shared.cleanupLoadedLibraries",
+                                 void function() @nogc nothrow)();
+                }
             }
             catch ( Throwable t )
             {

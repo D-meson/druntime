@@ -3,7 +3,7 @@ import core.internal.dassert : _d_assert_fail;
 
 void test(string comp = "==", A, B)(A a, B b, string msg, size_t line = __LINE__)
 {
-    test(_d_assert_fail!(comp, A, B)(a, b), msg, line);
+    test(_d_assert_fail!(A)(comp, a, b), msg, line);
 }
 
 void test(const string actual, const string expected, size_t line = __LINE__)
@@ -50,14 +50,6 @@ void testFloatingPoint()()
     test(float.max, -float.max, "3.40282e+38 != -3.40282e+38");
     test(double.max, -double.max, "1.79769e+308 != -1.79769e+308");
     test(real(1), real(-1), "1 != -1");
-
-    test(ifloat.max, -ifloat.max, "3.40282e+38i != -3.40282e+38i");
-    test(idouble.max, -idouble.max, "1.79769e+308i != -1.79769e+308i");
-    test(ireal(1i), ireal(-1i), "1i != -1i");
-
-    test(cfloat.max, -cfloat.max, "3.40282e+38 + 3.40282e+38i != -3.40282e+38 + -3.40282e+38i");
-    test(cdouble.max, -cdouble.max, "1.79769e+308 + 1.79769e+308i != -1.79769e+308 + -1.79769e+308i");
-    test(creal(1 + 2i), creal(-1 + 2i), "1 + 2i != -1 + 2i");
 }
 
 void testPointers()
@@ -175,10 +167,10 @@ void testStruct()()
     }
 
     NoCopy n;
-    test(_d_assert_fail!"!="(n, n), "NoCopy() == NoCopy()");
+    test(_d_assert_fail!(typeof(n))("!=", n, n), "NoCopy() == NoCopy()");
 
     shared NoCopy sn;
-    test(_d_assert_fail!"!="(sn, sn), "NoCopy() == NoCopy()");
+    test(_d_assert_fail!(typeof(sn))("!=", sn, sn), "NoCopy() == NoCopy()");
 }
 
 void testAA()()
@@ -188,12 +180,14 @@ void testAA()()
     test!"in"("foo", ["bar": true], `"foo" !in ["bar": true]`);
 }
 
-
 void testAttributes() @safe pure @nogc nothrow
 {
     int a;
-    string s = _d_assert_fail!"=="(a, 0);
-    string s2 = _d_assert_fail!"!"(a);
+    string s = _d_assert_fail!(int, char)("==", a, 'c', 1, 'd');
+    assert(s == `(0, 'c') != (1, 'd')`);
+
+    string s2 = _d_assert_fail!int("", a);
+    assert(s2 == `0 != true`);
 }
 
 // https://issues.dlang.org/show_bug.cgi?id=20066
@@ -231,13 +225,163 @@ void testEnum()
 
     ubyte[] data;
     enum ctfe = UUID();
-    test(_d_assert_fail!"=="(ctfe.data, data), "[1] != []");
+    test(_d_assert_fail!(ubyte[])("==", ctfe.data, data), "[1] != []");
 }
 
 void testUnary()
 {
-    test(_d_assert_fail!""(9), "9 != true");
-    test(_d_assert_fail!"!"([1, 2, 3]), "[1, 2, 3] == true");
+    test(_d_assert_fail!int("", 9), "9 != true");
+    test(_d_assert_fail!(int[])("!", [1, 2, 3]), "[1, 2, 3] == true");
+}
+
+void testTuple()
+{
+    test(_d_assert_fail("=="), "() != ()");
+    test(_d_assert_fail("!="), "() == ()");
+    test(_d_assert_fail(">="), "() < ()");
+}
+
+void testStructEquals()
+{
+    struct T {
+        bool b;
+        int i;
+        float f1 = 2.5;
+        float f2 = 0;
+        string s1 = "bar";
+        string s2;
+    }
+
+    T t1;
+    test!"!="(t1, t1, `T(false, 0, 2.5, 0, "bar", "") == T(false, 0, 2.5, 0, "bar", "")`);
+    T t2 = {s1: "bari"};
+    test(t1, t2, `T(false, 0, 2.5, 0, "bar", "") != T(false, 0, 2.5, 0, "bari", "")`);
+}
+
+void testStructEquals2()
+{
+    struct T {
+        bool b;
+        int i;
+        float f1 = 2.5;
+        float f2 = 0;
+    }
+
+    T t1;
+    test!"!="(t1, t1, `T(false, 0, 2.5, 0) == T(false, 0, 2.5, 0)`);
+    T t2 = {i: 2};
+    test(t1, t2, `T(false, 0, 2.5, 0) != T(false, 2, 2.5, 0)`);
+}
+
+void testStructEquals3()
+{
+    struct T {
+        bool b;
+        int i;
+        string s1 = "bar";
+        string s2;
+    }
+
+    T t1;
+    test!"!="(t1, t1, `T(false, 0, "bar", "") == T(false, 0, "bar", "")`);
+    T t2 = {s1: "bari"};
+    test(t1, t2, `T(false, 0, "bar", "") != T(false, 0, "bari", "")`);
+}
+
+void testStructEquals4()
+{
+    struct T {
+        float f1 = 2.5;
+        float f2 = 0;
+        string s1 = "bar";
+        string s2;
+    }
+
+    T t1;
+    test!"!="(t1, t1, `T(2.5, 0, "bar", "") == T(2.5, 0, "bar", "")`);
+    T t2 = {s1: "bari"};
+    test(t1, t2, `T(2.5, 0, "bar", "") != T(2.5, 0, "bari", "")`);
+}
+
+void testStructEquals5()
+{
+    struct T {
+        bool b;
+        int i;
+        float f2 = 0;
+        string s2;
+    }
+
+    T t1;
+    test!"!="(t1, t1, `T(false, 0, 0, "") == T(false, 0, 0, "")`);
+    T t2 = {b: true};
+    test(t1, t2, `T(false, 0, 0, "") != T(true, 0, 0, "")`);
+}
+
+void testStructEquals6()
+{
+    class C { override string toString() { return "C()"; }}
+    struct T {
+        bool b;
+        int i;
+        float f2 = 0;
+        string s2;
+        int[] arr;
+        C c;
+    }
+
+    T t1;
+    test!"!="(t1, t1, "T(false, 0, 0, \"\", [], `null`) == T(false, 0, 0, \"\", [], `null`)");
+    T t2 = {arr: [1]};
+    test(t1, t2, "T(false, 0, 0, \"\", [], `null`) != T(false, 0, 0, \"\", [1], `null`)");
+    T t3 = {c: new C()};
+    test(t1, t3, "T(false, 0, 0, \"\", [], `null`) != T(false, 0, 0, \"\", [], C())");
+}
+
+void testContextPointer()
+{
+    int i;
+    struct T
+    {
+        int j;
+        int get()
+        {
+            return i * j;
+        }
+    }
+    T t = T(1);
+    t.tupleof[$-1] = cast(void*) 0xABCD; // Deterministic context pointer
+    test(t, t, `T(1, <context>: 0xABCD) != T(1, <context>: 0xABCD)`);
+}
+
+void testDestruction()
+{
+    static class Test
+    {
+        __gshared string unary, binary;
+        __gshared bool run;
+
+        ~this()
+        {
+            run = true;
+            unary = _d_assert_fail!int("", 1);
+            binary = _d_assert_fail!int("==", 1, 2);
+        }
+    }
+
+    static void createGarbage()
+    {
+        new Test();
+        new long[100];
+    }
+
+    import core.memory : GC;
+    createGarbage();
+    GC.collect();
+
+    assert(Test.run);
+    assert(Test.unary == "Assertion failed (rich formatting is disabled in finalizers)");
+    assert(Test.binary == "Assertion failed (rich formatting is disabled in finalizers)");
 }
 
 void main()
@@ -256,5 +400,15 @@ void main()
     testTemporary();
     testEnum();
     testUnary();
+    testTuple();
+    testStructEquals();
+    testStructEquals2();
+    testStructEquals3();
+    testStructEquals4();
+    testStructEquals5();
+    testStructEquals6();
+    testContextPointer();
+    testDestruction();
+
     fprintf(stderr, "success.\n");
 }

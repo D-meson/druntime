@@ -17,14 +17,7 @@
  * License:   $(HTTP www.boost.org/LICENSE_1_0.txt, Boost License 1.0).
  * Authors:   Sean Kelly
  */
-
-/*          Copyright Sean Kelly 2005 - 2016.
- * Distributed under the Boost Software License, Version 1.0.
- *    (See accompanying file LICENSE or copy at
- *          http://www.boost.org/LICENSE_1_0.txt)
- */
-
-module gc.impl.manual.gc;
+module core.internal.gc.impl.manual.gc;
 
 //FIXME: need way to enable/disable compiling GC engines
 
@@ -46,18 +39,13 @@ extern(C) pragma(crt_constructor) void _d_register_manual_gc()
 
 private GC initialize()
 {
-    import core.stdc.string: memcpy;
+    import core.lifetime : emplace;
 
-    auto p = cstdlib.malloc(__traits(classInstanceSize, ManualGC));
-    if (!p)
+    auto gc = cast(ManualGC) cstdlib.malloc(__traits(classInstanceSize, ManualGC));
+    if (!gc)
         onOutOfMemoryError();
 
-    auto init = typeid(ManualGC).initializer();
-    assert(init.length == __traits(classInstanceSize, ManualGC));
-    auto instance = cast(ManualGC) memcpy(p, init.ptr, init.length);
-    instance.__ctor();
-
-    return instance;
+    return emplace(gc);
 }
 
 class ManualGC : GC

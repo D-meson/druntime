@@ -75,6 +75,10 @@ version (LDC)
             _ordering!(succ), _ordering!(fail), weak);
         return result.exchanged;
     }
+    bool atomicCompareExchangeWeakNoResult(MemoryOrder succ = MemoryOrder.seq, MemoryOrder fail = MemoryOrder.seq, T)(T* dest, const T compare, T value) pure nothrow @nogc @trusted
+    {
+        return atomicCompareExchangeNoResult!(true, succ, fail, T)(dest, compare, value);
+    }
     bool atomicCompareExchangeStrongNoResult(MemoryOrder succ = MemoryOrder.seq, MemoryOrder fail = MemoryOrder.seq, T)(T* dest, const T compare, T value) pure nothrow @nogc @trusted
     {
         return atomicCompareExchangeNoResult!(false, succ, fail, T)(dest, compare, value);
@@ -603,6 +607,8 @@ version (DigitalMars)
             static assert (false, "Unsupported architecture.");
     }
 
+    alias atomicCompareExchangeWeakNoResult = atomicCompareExchangeStrongNoResult;
+
     bool atomicCompareExchangeStrongNoResult(MemoryOrder succ = MemoryOrder.seq, MemoryOrder fail = MemoryOrder.seq, T)(T* dest, const T compare, T value) pure nothrow @nogc @trusted
         if (CanCAS!T)
     {
@@ -994,6 +1000,12 @@ else version (GNU)
         if (CanCAS!T)
     {
         return atomicCompareExchangeImpl!(succ, fail, false)(dest, cast(T*)&compare, value);
+    }
+
+    bool atomicCompareExchangeWeakNoResult(MemoryOrder succ = MemoryOrder.seq, MemoryOrder fail = MemoryOrder.seq, T)(T* dest, const T compare, T value) pure nothrow @nogc @trusted
+        if (CanCAS!T)
+    {
+        return atomicCompareExchangeImpl!(succ, fail, true)(dest, cast(T*)&compare, value);
     }
 
     private bool atomicCompareExchangeImpl(MemoryOrder succ = MemoryOrder.seq, MemoryOrder fail = MemoryOrder.seq, bool weak, T)(T* dest, T* compare, T value) pure nothrow @nogc @trusted

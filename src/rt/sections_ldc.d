@@ -402,7 +402,7 @@ out (result)
     foreach(m; result)
         assert(m !is null);
 }
-body
+do
 {
     import core.stdc.stdlib : malloc;
 

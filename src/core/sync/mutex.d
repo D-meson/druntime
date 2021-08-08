@@ -197,7 +197,10 @@ class Mutex :
             if (pthread_mutex_lock(&m_hndl) == 0)
                 return;
 
-            SyncError syncErr = cast(SyncError) cast(void*) typeid(SyncError).initializer;
+            version (LDC)
+                SyncError syncErr = cast(SyncError) __traits(initSymbol, SyncError).ptr;
+            else
+                SyncError syncErr = cast(SyncError) cast(void*) typeid(SyncError).initializer;
             syncErr.msg = "Unable to lock mutex.";
             throw syncErr;
         }
@@ -235,7 +238,10 @@ class Mutex :
             if (pthread_mutex_unlock(&m_hndl) == 0)
                 return;
 
-            SyncError syncErr = cast(SyncError) cast(void*) typeid(SyncError).initializer;
+            version (LDC)
+                SyncError syncErr = cast(SyncError) __traits(initSymbol, SyncError).ptr;
+            else
+                SyncError syncErr = cast(SyncError) cast(void*) typeid(SyncError).initializer;
             syncErr.msg = "Unable to unlock mutex.";
             throw syncErr;
         }
@@ -353,14 +359,10 @@ unittest
 @system @nogc nothrow unittest
 {
     import core.stdc.stdlib : malloc, free;
+    import core.lifetime : emplace;
 
-    void* p = malloc(__traits(classInstanceSize, Mutex));
-
-    auto ti = typeid(Mutex);
-    p[0 .. ti.initializer.length] = ti.initializer[];
-
-    shared Mutex mtx = cast(shared(Mutex)) p;
-    mtx.__ctor();
+    auto mtx = cast(shared Mutex) malloc(__traits(classInstanceSize, Mutex));
+    emplace(mtx);
 
     mtx.lock_nothrow();
 

@@ -426,7 +426,7 @@ alias AssertHandler = void function(string file, size_t line, string msg) nothro
 extern (C) void onAssertError( string file = __FILE__, size_t line = __LINE__ ) nothrow
 {
     if ( _assertHandler is null )
-        throw new AssertError( file, line );
+        throw staticError!AssertError(file, line);
     _assertHandler( file, line, null);
 }
 
@@ -444,7 +444,7 @@ extern (C) void onAssertError( string file = __FILE__, size_t line = __LINE__ ) 
 extern (C) void onAssertErrorMsg( string file, size_t line, string msg ) nothrow
 {
     if ( _assertHandler is null )
-        throw new AssertError( msg, file, line );
+        throw staticError!AssertError(msg, file, line);
     _assertHandler( file, line, msg );
 }
 
@@ -630,6 +630,16 @@ extern (C)
 // TLS storage shared for all errors, chaining might create circular reference
 private align(2 * size_t.sizeof) void[128] _store;
 
+version (LDC) version (Windows)
+{
+    version = LDC_Windows;
+
+    // cannot access TLS globals directly across DLL boundaries, e.g.,
+    // when instantiating `staticError` below in another DLL
+    pragma(inline, false) // could be safely inlined in the binary containing druntime only
+    private ref void[128] getStore() { return _store; }
+}
+
 // only Errors for now as those are rarely chained
 private T staticError(T, Args...)(auto ref Args args)
     if (is(T : Error))
@@ -640,11 +650,16 @@ private T staticError(T, Args...)(auto ref Args args)
         static assert(__traits(classInstanceSize, T) <= _store.length,
                       T.stringof ~ " is too large for staticError()");
 
-        _store[0 .. __traits(classInstanceSize, T)] = typeid(T).initializer[];
-        return cast(T) _store.ptr;
+        version (LDC_Windows)
+            auto store = &getStore();
+        else
+            auto store = &_store;
+
+        return cast(T) store.ptr;
     }
     auto res = (cast(T function() @trusted pure nothrow @nogc) &get)();
-    res.__ctor(args);
+    import core.lifetime : emplace;
+    emplace(res, args);
     return res;
 }
 

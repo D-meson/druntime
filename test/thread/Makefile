@@ -1,6 +1,6 @@
 include ../common.mak
 
-TESTS:=tlsgc_sections test_import tlsstack
+TESTS:=tlsgc_sections test_import tlsstack join_detach
 # LDC: disable POSIX-specific tests on Windows
 ifeq (,$(findstring win,$(OS)))
 TESTS+=fiber_guard_page external_threads
@@ -34,6 +34,9 @@ $(ROOT)/tlsstack.done: $(ROOT)/%.done : $(ROOT)/%
 	@echo Testing $*
 	$(QUIET)$(TIMELIMIT)$(ROOT)/$*
 	@touch $@
+
+$(ROOT)/join_detach.done: $(ROOT)/%.done : $(ROOT)/%
+	@echo Testing $* is currently disabled!
 
 $(ROOT)/%: $(SRC)/%.d
 	$(QUIET)$(DMD) $(DFLAGS) -of$@ $<

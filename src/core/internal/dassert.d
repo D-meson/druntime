@@ -23,7 +23,7 @@ module core.internal.dassert;
  * Generates rich assert error messages for unary expressions
  *
  * The unary expression `assert(!una)` will be turned into
- * `assert(!una, _d_assert_fail!"!"(una))`.
+ * `assert(!una, _d_assert_fail("!", una))`.
  * This routine simply acts as if the user wrote `assert(una == false)`.
  *
  * Params:
@@ -35,56 +35,95 @@ module core.internal.dassert;
  * Returns:
  *   A string such as "$a != true" or "$a == true".
  */
-string _d_assert_fail(string op, A)(auto ref const scope A a)
+string _d_assert_fail(A)(const scope string op, auto ref const scope A a)
 {
-    string val = miniFormatFakeAttributes(a);
-    enum token = op == "!" ? "==" : "!=";
-    return combine(val, token, "true");
+    // Prevent InvalidMemoryOperationError when triggered from a finalizer
+    if (inFinalizer())
+        return "Assertion failed (rich formatting is disabled in finalizers)";
+
+    string[2] vals = [ miniFormatFakeAttributes(a), "true" ];
+    immutable token = op == "!" ? "==" : "!=";
+    return combine(vals[0 .. 1], token, vals[1 .. $]);
 }
 
 /**
  * Generates rich assert error messages for binary expressions
  *
  * The binary expression `assert(x == y)` will be turned into
- * `assert(x == y, _d_assert_fail!"=="(x, y))`.
+ * `assert(x == y, _d_assert_fail!(typeof(x))("==", x, y))`.
  *
  * Params:
  *   comp = Comparison operator that was used in the expression.
- *   a  = Left hand side operand.
- *   b  = Right hand side operand.
+ *   a  = Left hand side operand (can be a tuple).
+ *   b  = Right hand side operand (can be a tuple).
  *
  * Returns:
  *   A string such as "$a $comp $b".
  */
-string _d_assert_fail(string comp, A, B)(auto ref const scope A a, auto ref const scope B b)
+template _d_assert_fail(A...)
 {
-    /*
-    The program will be terminated after the assertion error message has
-    been printed and its not considered part of the "main" program.
-    Also, catching an AssertError is Undefined Behavior
-    Hence, we can fake purity and @nogc-ness here.
-    */
+    string _d_assert_fail(B...)(
+        const scope string comp, auto ref const scope A a, auto ref const scope B b)
+    if (B.length != 0 || A.length != 1) // Resolve ambiguity with unary overload
+    {
+        // Prevent InvalidMemoryOperationError when triggered from a finalizer
+        if (inFinalizer())
+            return "Assertion failed (rich formatting is disabled in finalizers)";
 
-    string valA = miniFormatFakeAttributes(a);
-    string valB = miniFormatFakeAttributes(b);
-    enum token = invertCompToken(comp);
-    return combine(valA, token, valB);
+        string[A.length + B.length] vals;
+        static foreach (idx; 0 .. A.length)
+            vals[idx] = miniFormatFakeAttributes(a[idx]);
+        static foreach (idx; 0 .. B.length)
+            vals[A.length + idx] = miniFormatFakeAttributes(b[idx]);
+        immutable token = invertCompToken(comp);
+        return combine(vals[0 .. A.length], token, vals[A.length .. $]);
+    }
 }
 
 /// Combines the supplied arguments into one string "valA token valB"
-private string combine(const scope string valA, const scope string token,
-const scope string valB) pure nothrow @nogc @safe
+private string combine(const scope string[] valA, const scope string token,
+    const scope string[] valB) pure nothrow @nogc @safe
 {
-    const totalLen = valA.length + token.length + valB.length + 2;
+    // Each separator is 2 chars (", "), plus the two spaces around the token.
+    size_t totalLen = (valA.length - 1) * 2 +
+        (valB.length - 1) * 2 + 2 + token.length;
+
+    // Empty arrays are printed as ()
+    if (valA.length == 0) totalLen += 2;
+    if (valB.length == 0) totalLen += 2;
+
+    foreach (v; valA) totalLen += v.length;
+    foreach (v; valB) totalLen += v.length;
+
+    // Include braces when printing tuples
+    const printBraces = (valA.length + valB.length) != 2;
+    if (printBraces) totalLen += 4; // '(', ')' for both tuples
+
     char[] buffer = cast(char[]) pureAlloc(totalLen)[0 .. totalLen];
     // @nogc-concat of "<valA> <comp> <valB>"
-    auto n = valA.length;
-    buffer[0 .. n] = valA;
+    static void formatTuple (scope char[] buffer, ref size_t n, in string[] vals, in bool printBraces)
+    {
+        if (printBraces) buffer[n++] = '(';
+        foreach (idx, v; vals)
+        {
+            if (idx)
+            {
+                buffer[n++] = ',';
+                buffer[n++] = ' ';
+            }
+            buffer[n .. n + v.length] = v;
+            n += v.length;
+        }
+        if (printBraces) buffer[n++] = ')';
+    }
+
+    size_t n;
+    formatTuple(buffer, n, valA, printBraces);
     buffer[n++] = ' ';
     buffer[n .. n + token.length] = token;
     n += token.length;
     buffer[n++] = ' ';
-    buffer[n .. n + valB.length] = valB;
+    formatTuple(buffer, n, valB, printBraces);
     return (() @trusted => cast(string) buffer)();
 }
 
@@ -140,9 +179,38 @@ private string miniFormat(V)(const scope ref V v)
             return miniFormat(*cast(T*) &v);
         }
     }
+    // Format enum members using their name
+    else static if (is(V BaseType == enum))
+    {
+        // Always generate repeated if's instead of switch to skip the detection
+        // of non-integral enums. This method doesn't need to be fast.
+        static foreach (mem; __traits(allMembers, V))
+        {
+            if (v == __traits(getMember, V, mem))
+                return mem;
+        }
+
+        // Format invalid enum values as their base type
+        enum cast_ = "cast(" ~ V.stringof ~ ")";
+        const val = miniFormat(*(cast(BaseType*) &v));
+        return combine([ cast_ ], "", [ val ]);
+    }
     else static if (is(V == bool))
     {
         return v ? "true" : "false";
+    }
+    else static if (is(V == __vector(ET[N]), ET, size_t N))
+    {
+        string msg = "[";
+        foreach (i; 0 .. N)
+        {
+            if (i > 0)
+                msg ~= ", ";
+
+            msg ~= miniFormat(v[i]);
+        }
+        msg ~= "]";
+        return msg;
     }
     else static if (__traits(isIntegral, V))
     {
@@ -180,17 +248,22 @@ private string miniFormat(V)(const scope ref V v)
             alias LD = real;
         else
             import core.stdc.config : LD = c_long_double;
+        // Workaround for https://issues.dlang.org/show_bug.cgi?id=20759
+        static if (is(LD == real))
+            enum realFmt = "%Lg";
+        else
+            enum realFmt = "%g";
 
         char[60] val;
         int len;
         static if (is(V == float) || is(V == double))
             len = sprintf(&val[0], "%g", v);
         else static if (is(V == real))
-            len = sprintf(&val[0], "%Lg", cast(LD) v);
+            len = sprintf(&val[0], realFmt, cast(LD) v);
         else static if (is(V == cfloat) || is(V == cdouble))
             len = sprintf(&val[0], "%g + %gi", v.re, v.im);
         else static if (is(V == creal))
-            len = sprintf(&val[0], "%Lg + %Lgi", cast(LD) v.re, cast(LD) v.im);
+            len = sprintf(&val[0], realFmt ~ " + " ~ realFmt ~ 'i', cast(LD) v.re, cast(LD) v.im);
         else static if (is(V == ifloat) || is(V == idouble))
             len = sprintf(&val[0], "%gi", v);
         else // ireal
@@ -200,7 +273,7 @@ private string miniFormat(V)(const scope ref V v)
                 alias R = ireal;
             else
                 alias R = idouble;
-            len = sprintf(&val[0], "%Lgi", cast(R) v);
+            len = sprintf(&val[0], realFmt ~ 'i', cast(R) v);
         }
         return val.idup[0 .. len];
     }
@@ -283,7 +356,7 @@ private string miniFormat(V)(const scope ref V v)
     {
         size_t i;
         string msg = "[";
-        foreach (k, ref val; v)
+        foreach (ref k, ref val; v)
         {
             if (i > 0)
                 msg ~= ", ";
@@ -300,11 +373,17 @@ private string miniFormat(V)(const scope ref V v)
     }
     else static if (is(V == struct))
     {
+        enum ctxPtr = __traits(isNested, V);
         string msg = V.stringof ~ "(";
         foreach (i, ref field; v.tupleof)
         {
             if (i > 0)
                 msg ~= ", ";
+
+            // Mark context pointer
+            static if (ctxPtr && i == v.tupleof.length - 1)
+                msg ~= "<context>: ";
+
             msg ~= miniFormat(field);
         }
         msg ~= ")";
@@ -322,7 +401,7 @@ private string miniFormat(V)(const scope ref V v)
 import core.atomic : atomicLoad;
 
 // Inverts a comparison token for use in _d_assert_fail
-private string invertCompToken(string comp)
+private string invertCompToken(scope string comp) pure nothrow @nogc @safe
 {
     switch (comp)
     {
@@ -347,7 +426,7 @@ private string invertCompToken(string comp)
         case "!in":
             return "in";
         default:
-            assert(0, "Invalid comparison operator: " ~ comp);
+            assert(0, combine(["Invalid comparison operator '"], comp, ["'"]));
     }
 }
 
@@ -373,4 +452,58 @@ private auto pureAlloc(size_t t)
         return new ubyte[len];
     }
     return assumeFakeAttributes(&alloc)(t);
+}
+
+/// Wrapper for GC.inFinalizer that fakes purity
+private bool inFinalizer()() pure nothrow @nogc @safe
+{
+    // CTFE doesn't trigger InvalidMemoryErrors
+    import core.memory : GC;
+    return !__ctfe && assumeFakeAttributes(&GC.inFinalizer)();
+}
+
+// https://issues.dlang.org/show_bug.cgi?id=21544
+unittest
+{
+    // Normal enum values
+    enum E { A, BCDE }
+    E e = E.A;
+    assert(miniFormat(e) == "A");
+    e = E.BCDE;
+    assert(miniFormat(e) == "BCDE");
+
+    // Invalid enum value is printed as their implicit base type (int)
+    e = cast(E) 3;
+    assert(miniFormat(e) == "cast(E)  3");
+
+    // Non-integral enums work as well
+    static struct S
+    {
+        int a;
+        string str;
+    }
+
+    enum E2 : S { a2 = S(1, "Hello") }
+    E2 es = E2.a2;
+    assert(miniFormat(es) == `a2`);
+
+    // Even invalid values
+    es = cast(E2) S(2, "World");
+    assert(miniFormat(es) == `cast(E2)  S(2, "World")`);
+}
+
+// vectors
+unittest
+{
+    static if (is(__vector(float[4])))
+    {
+        __vector(float[4]) f = [-1.5f, 0.5f, 1.0f, 0.125f];
+        assert(miniFormat(f) == "[-1.5, 0.5, 1, 0.125]");
+    }
+
+    static if (is(__vector(int[4])))
+    {
+        __vector(int[4]) i = [-1, 0, 1, 3];
+        assert(miniFormat(i) == "[-1, 0, 1, 3]");
+    }
 }

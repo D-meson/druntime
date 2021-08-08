@@ -1,5 +1,7 @@
 module core.lifetime;
 
+import core.internal.attributes : betterC;
+
 // emplace
 /**
 Given a pointer `chunk` to uninitialized memory (but already typed
@@ -17,6 +19,7 @@ T* emplace(T)(T* chunk) @safe pure nothrow
 }
 
 ///
+@betterC
 @system unittest
 {
     static struct S
@@ -63,6 +66,7 @@ T* emplace(T, Args...)(T* chunk, auto ref Args args)
 }
 
 ///
+@betterC
 @system unittest
 {
     int a;
@@ -70,18 +74,12 @@ T* emplace(T, Args...)(T* chunk, auto ref Args args)
     assert(*emplace!int(&a, b) == 42);
 }
 
+@betterC
 @system unittest
 {
     shared int i;
     emplace(&i, 42);
     assert(i == 42);
-}
-
-private @nogc pure nothrow @safe
-void testEmplaceChunk(void[] chunk, size_t typeSize, size_t typeAlignment)
-{
-    assert(chunk.length >= typeSize, "emplace: Chunk size too small.");
-    assert((cast(size_t) chunk.ptr) % typeAlignment == 0, "emplace: Chunk is not aligned.");
 }
 
 /**
@@ -105,8 +103,19 @@ T emplace(T, Args...)(T chunk, auto ref Args args)
         " is abstract and it can't be emplaced");
 
     // Initialize the object in its pre-ctor state
-    enum classSize = __traits(classInstanceSize, T);
-    (() @trusted => (cast(void*) chunk)[0 .. classSize] = typeid(T).initializer[])();
+    version (LDC)
+    {
+        () @trusted
+        {
+            const initializer = __traits(initSymbol, T);
+            (cast(void*) chunk)[0 .. initializer.length] = initializer[];
+        }();
+    }
+    else
+    {
+        enum classSize = __traits(classInstanceSize, T);
+        (() @trusted => (cast(void*) chunk)[0 .. classSize] = typeid(T).initializer[])();
+    }
 
     static if (isInnerClass!T)
     {
@@ -121,11 +130,11 @@ T emplace(T, Args...)(T chunk, auto ref Args args)
     else alias args1 = args;
 
     // Call the ctor if any
-    static if (is(typeof(chunk.__ctor(args1))))
+    static if (is(typeof(chunk.__ctor(forward!args1))))
     {
         // T defines a genuine constructor accepting args
         // Go the classic route: write .init first, then call ctor
-        chunk.__ctor(args1);
+        chunk.__ctor(forward!args1);
     }
     else
     {
@@ -203,9 +212,14 @@ T emplace(T, Args...)(void[] chunk, auto ref Args args)
     if (is(T == class))
 {
     import core.internal.traits : maxAlignment;
+
     enum classSize = __traits(classInstanceSize, T);
-    testEmplaceChunk(chunk, classSize, maxAlignment!(void*, typeof(T.tupleof)));
-    return emplace!T(cast(T)(chunk.ptr), args);
+    assert(chunk.length >= classSize, "chunk size too small.");
+
+    enum alignment = maxAlignment!(void*, typeof(T.tupleof));
+    assert((cast(size_t) chunk.ptr) % alignment == 0, "chunk is not aligned.");
+
+    return emplace!T(cast(T)(chunk.ptr), forward!args);
 }
 
 ///
@@ -241,22 +255,36 @@ T emplace(T, Args...)(void[] chunk, auto ref Args args)
 {
     static class __conv_EmplaceTestClass
     {
+        @nogc @safe pure nothrow:
         int i = 3;
-        this(int i) @nogc @safe pure nothrow
+        this(int i)
         {
-            assert(this.i == 3 && i == 5);
-            this.i = i;
+            assert(this.i == 3);
+            this.i = 10 + i;
         }
-        this(int i, ref int j) @nogc @safe pure nothrow
+        this(ref int i)
         {
-            assert(i == 5 && j == 6);
+            assert(this.i == 3);
+            this.i = 20 + i;
+        }
+        this(int i, ref int j)
+        {
+            assert(this.i == 3 && i == 5 && j == 6);
             this.i = i;
             ++j;
         }
     }
+
     int var = 6;
     align(__conv_EmplaceTestClass.alignof) ubyte[__traits(classInstanceSize, __conv_EmplaceTestClass)] buf;
     auto support = (() @trusted => cast(__conv_EmplaceTestClass)(buf.ptr))();
+
+    auto fromRval = emplace!__conv_EmplaceTestClass(support, 1);
+    assert(fromRval.i == 11);
+
+    auto fromLval = emplace!__conv_EmplaceTestClass(support, var);
+    assert(fromLval.i == 26);
+
     auto k = emplace!__conv_EmplaceTestClass(support, 5, var);
     assert(k.i == 5);
     assert(var == 7);
@@ -281,19 +309,22 @@ T* emplace(T, Args...)(void[] chunk, auto ref Args args)
     import core.internal.traits : Unqual;
     import core.internal.lifetime : emplaceRef;
 
-    testEmplaceChunk(chunk, T.sizeof, T.alignof);
-    emplaceRef!(T, Unqual!T)(*cast(Unqual!T*) chunk.ptr, args);
+    assert(chunk.length >= T.sizeof, "chunk size too small.");
+    assert((cast(size_t) chunk.ptr) % T.alignof == 0, "emplace: Chunk is not aligned.");
+
+    emplaceRef!(T, Unqual!T)(*cast(Unqual!T*) chunk.ptr, forward!args);
     return cast(T*) chunk.ptr;
 }
 
 ///
+@betterC
 @system unittest
 {
     struct S
     {
         int a, b;
     }
-    auto buf = new void[S.sizeof];
+    void[S.sizeof] buf = void;
     S s;
     s.a = 42;
     s.b = 43;
@@ -303,6 +334,7 @@ T* emplace(T, Args...)(void[] chunk, auto ref Args args)
 
 // Bulk of emplace unittests starts here
 
+@betterC
 @system unittest /* unions */
 {
     static union U
@@ -334,6 +366,7 @@ T* emplace(T, Args...)(void[] chunk, auto ref Args args)
     static assert( is(typeof(emplace!Bar(memory))));
 }
 
+@betterC
 @system unittest
 {
     struct S { @disable this(); }
@@ -342,6 +375,7 @@ T* emplace(T, Args...)(void[] chunk, auto ref Args args)
     emplace(&s, S.init);
 }
 
+@betterC
 @system unittest
 {
     struct S1
@@ -433,6 +467,7 @@ T* emplace(T, Args...)(void[] chunk, auto ref Args args)
 //Start testing emplace-struct here
 
 // Test constructor branch
+@betterC
 @system unittest
 {
     struct S
@@ -446,7 +481,7 @@ T* emplace(T, Args...)(void[] chunk, auto ref Args args)
         }
     }
 
-    auto s1 = new void[S.sizeof];
+    void[S.sizeof] s1 = void;
     auto s2 = S(42, 43);
     assert(*emplace!S(cast(S*) s1.ptr, s2) == s2);
     assert(*emplace!S(cast(S*) s1, 44, 45) == S(44, 45));
@@ -492,6 +527,7 @@ T* emplace(T, Args...)(void[] chunk, auto ref Args args)
 }
 
 // Test matching fields branch
+@betterC
 @system unittest
 {
     struct S { uint n; }
@@ -500,6 +536,7 @@ T* emplace(T, Args...)(void[] chunk, auto ref Args args)
     assert(s.n == 2);
 }
 
+@betterC
 @safe unittest
 {
     struct S { int a, b; this(int){} }
@@ -507,6 +544,7 @@ T* emplace(T, Args...)(void[] chunk, auto ref Args args)
     static assert(!__traits(compiles, emplace!S(&s, 2, 3)));
 }
 
+@betterC
 @system unittest
 {
     struct S { int a, b = 7; }
@@ -520,6 +558,7 @@ T* emplace(T, Args...)(void[] chunk, auto ref Args args)
 }
 
 //opAssign
+@betterC
 @system unittest
 {
     static struct S
@@ -538,6 +577,7 @@ T* emplace(T, Args...)(void[] chunk, auto ref Args args)
 }
 
 //postblit precedence
+@betterC
 @system unittest
 {
     //Works, but breaks in "-w -O" because of @@@9332@@@.
@@ -597,6 +637,7 @@ T* emplace(T, Args...)(void[] chunk, auto ref Args args)
 }
 
 //disabled postblit
+@betterC
 @system unittest
 {
     static struct S1
@@ -617,7 +658,7 @@ T* emplace(T, Args...)(void[] chunk, auto ref Args args)
         this(ref S2){}
     }
     S2 s2 = void;
-    static assert(!__traits(compiles, emplace(&s2, 1)));
+    //static assert(!__traits(compiles, emplace(&s2, 1)));
     emplace(&s2, S2.init);
 
     static struct SS1
@@ -647,6 +688,7 @@ T* emplace(T, Args...)(void[] chunk, auto ref Args args)
 }
 
 //Imutability
+@betterC
 @system unittest
 {
     //Castable immutability
@@ -674,6 +716,7 @@ T* emplace(T, Args...)(void[] chunk, auto ref Args args)
     }
 }
 
+@betterC
 @system unittest
 {
     static struct S
@@ -717,6 +760,7 @@ T* emplace(T, Args...)(void[] chunk, auto ref Args args)
 }
 
 //Alias this
+@betterC
 @system unittest
 {
     static struct S
@@ -800,6 +844,7 @@ version (CoreUnittest)
 }
 
 //safety & nothrow & CTFE
+@betterC
 @system unittest
 {
     //emplace should be safe for anything with no elaborate opassign
@@ -856,7 +901,7 @@ version (CoreUnittest)
     assert(cc.i == 5);
 }
 
-
+@betterC
 @system unittest
 {
     struct S
@@ -882,6 +927,7 @@ version (CoreUnittest)
 }
 
 //disable opAssign
+@betterC
 @system unittest
 {
     static struct S
@@ -893,6 +939,7 @@ version (CoreUnittest)
 }
 
 //opCall
+@betterC
 @system unittest
 {
     int i;
@@ -930,51 +977,6 @@ version (CoreUnittest)
         emplace(&s, S3.init);
     }
 }
-
-/+ these tests can't be performed in druntime, but a mirror still exists in phobos...
-@safe unittest //@@@9559@@@
-{
-    import std.algorithm.iteration : map;
-    import std.array : array;
-    import std.typecons : Nullable;
-    alias I = Nullable!int;
-    auto ints = [0, 1, 2].map!(i => i & 1 ? I.init : I(i))();
-    auto asArray = array(ints);
-}
-@system unittest //http://forum.dlang.org/post/nxbdgtdlmwscocbiypjs@forum.dlang.org
-{
-    import std.array : array;
-    import std.datetime : SysTime, UTC;
-    import std.math : isNaN;
-    static struct A
-    {
-        double i;
-    }
-    static struct B
-    {
-        invariant()
-        {
-            if (j == 0)
-                assert(a.i.isNaN(), "why is 'j' zero?? and i is not NaN?");
-            else
-                assert(!a.i.isNaN());
-        }
-        SysTime when; // comment this line avoid the breakage
-        int j;
-        A a;
-    }
-    B b1 = B.init;
-    assert(&b1); // verify that default eyes invariants are ok;
-    auto b2 = B(SysTime(0, UTC()), 1, A(1));
-    assert(&b2);
-    auto b3 = B(SysTime(0, UTC()), 1, A(1));
-    assert(&b3);
-    auto arr = [b2, b3];
-    assert(arr[0].j == 1);
-    assert(arr[1].j == 1);
-    auto a2 = arr.array(); // << bang, invariant is raised, also if b2 and b3 are good
-}
-+/
 
 //static arrays
 @system unittest
@@ -1104,6 +1106,7 @@ version (CoreUnittest)
     emplaceRef!(IS[2])(ss, iss[]);
 }
 
+@betterC
 pure nothrow @safe @nogc unittest
 {
     import core.internal.lifetime : emplaceRef;
@@ -1147,6 +1150,7 @@ pure nothrow @safe /* @nogc */ unittest
     static assert(!__traits(compiles, emplaceRef(uninitializedUnsafeArr, unsafeArr)));
 }
 
+@betterC
 @system unittest
 {
     // Issue 15313
@@ -1195,6 +1199,7 @@ pure nothrow @safe /* @nogc */ unittest
 }
 
 //constructor arguments forwarding
+@betterC
 @system unittest
 {
     static struct S
@@ -1297,6 +1302,7 @@ void copyEmplace(S, T)(ref S source, ref T target) @system
 }
 
 ///
+@betterC
 @system pure nothrow @nogc unittest
 {
     int source = 123;
@@ -1306,6 +1312,7 @@ void copyEmplace(S, T)(ref S source, ref T target) @system
 }
 
 ///
+@betterC
 @system pure nothrow @nogc unittest
 {
     immutable int[1][1] source = [ [123] ];
@@ -1315,6 +1322,7 @@ void copyEmplace(S, T)(ref S source, ref T target) @system
 }
 
 ///
+@betterC
 @system pure nothrow @nogc unittest
 {
     struct S
@@ -1617,6 +1625,7 @@ template forward(args...)
     assert(baz(S(), makeS(), n, s) == "LLRRRL");
 }
 
+@betterC
 @safe unittest
 {
     ref int foo(return ref int a) { return a; }
@@ -1630,6 +1639,7 @@ template forward(args...)
 }
 
 ///
+@betterC
 @safe unittest
 {
     struct X {
@@ -1697,6 +1707,7 @@ template forward(args...)
 }
 
 // lazy -> lazy
+@betterC
 @safe unittest
 {
     int foo1(lazy int i) { return i; }
@@ -1709,6 +1720,7 @@ template forward(args...)
 }
 
 // lazy -> non-lazy
+@betterC
 @safe unittest
 {
     int foo1(int a, int b) { return a + b; }
@@ -1721,6 +1733,7 @@ template forward(args...)
 }
 
 // non-lazy -> lazy
+@betterC
 @safe unittest
 {
     int foo1(int a, lazy int b) { return a + b; }
@@ -1731,6 +1744,7 @@ template forward(args...)
 }
 
 // out
+@betterC
 @safe unittest
 {
     void foo1(int a, out int b) { b = a; }
@@ -2001,6 +2015,7 @@ private T trustedMoveImpl(T)(ref T source) @trusted
     assert(s53 is s51);
 }
 
+@betterC
 @system unittest
 {
     static struct S { int n = 0; ~this() @system { n = 0; } }
@@ -2022,6 +2037,7 @@ private T trustedMoveImpl(T)(ref T source) @trusted
     x = move(x);
 }
 +/
+@betterC
 @safe unittest// Issue 8055
 {
     static struct S
@@ -2116,6 +2132,8 @@ private void moveEmplaceImpl(T)(ref T source, ref T target)
 
             static if (__traits(isZeroInit, T))
                 () @trusted { memset(&source, 0, sz); }();
+            else version (LDC)
+                () @trusted { memcpy(&source, __traits(initSymbol, T).ptr, sz); }();
             else
             {
                 auto init = typeid(T).initializer();
@@ -2151,6 +2169,7 @@ void moveEmplace(T)(ref T source, ref T target) @system
 }
 
 ///
+@betterC
 pure nothrow @nogc @system unittest
 {
     static struct Foo

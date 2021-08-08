@@ -4,6 +4,7 @@
  * Copyright: Copyright Digital Mars 2000 - 2011.
  * License:   $(HTTP www.boost.org/LICENSE_1_0.txt, Boost License 1.0).
  * Authors:   Walter Bright, Sean Kelly
+ * Source: $(DRUNTIMESRC rt/_critical_.d)
  */
 
 /*          Copyright Digital Mars 2000 - 2011.
@@ -41,7 +42,8 @@ extern (C) void _d_criticalenter(D_CRITICAL_SECTION* cs)
 
 extern (C) void _d_criticalenter2(D_CRITICAL_SECTION** pcs)
 {
-    if (atomicLoad!(MemoryOrder.acq)(*cast(shared) pcs) is null)
+    import ldc.intrinsics : llvm_expect;
+    if (llvm_expect(atomicLoad!(MemoryOrder.acq)(*cast(shared) pcs) is null, false))
     {
         lockMutex(cast(Mutex*)&gcs.mtx);
         if (atomicLoad!(MemoryOrder.raw)(*cast(shared) pcs) is null)
