@@ -70,6 +70,7 @@ src = files(
     'src/rt/profilegc.d',
     'src/rt/tlsgc.d',
     'src/rt/util/typeinfo.d',
+    'src/rt/util/utility.d',
     'src/rt/sections.d',
     'src/rt/sections_android.d',
     'src/rt/sections_elf_shared.d',
