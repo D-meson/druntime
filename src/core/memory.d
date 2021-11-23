@@ -132,7 +132,7 @@ private
         uint   attr;
     }
 
-    extern (C) BlkInfo_ gc_query( void* p ) pure nothrow;
+    extern (C) BlkInfo_ gc_query(return scope void* p) pure nothrow;
     extern (C) GC.Stats gc_stats ( ) nothrow @nogc;
     extern (C) GC.ProfileStats gc_profileStats ( ) nothrow @nogc @safe;
 }
@@ -465,7 +465,7 @@ extern(C):
      * Throws:
      *  OutOfMemoryError on allocation failure.
      */
-    pragma(mangle, "gc_malloc") static void* malloc(size_t sz, uint ba = 0, const TypeInfo ti = null) pure nothrow;
+    pragma(mangle, "gc_malloc") static void* malloc(size_t sz, uint ba = 0, const scope TypeInfo ti = null) pure nothrow;
 
 
     /**
@@ -488,7 +488,7 @@ extern(C):
      * Throws:
      *  OutOfMemoryError on allocation failure.
      */
-    pragma(mangle, "gc_qalloc") static BlkInfo qalloc(size_t sz, uint ba = 0, const TypeInfo ti = null) pure nothrow;
+    pragma(mangle, "gc_qalloc") static BlkInfo qalloc(size_t sz, uint ba = 0, const scope TypeInfo ti = null) pure nothrow;
 
 
     /**
@@ -557,7 +557,7 @@ extern(C):
      * Throws:
      *  `OutOfMemoryError` on allocation failure.
      */
-    pragma(mangle, "gc_realloc") static void* realloc(void* p, size_t sz, uint ba = 0, const TypeInfo ti = null) pure nothrow;
+    pragma(mangle, "gc_realloc") static void* realloc(return void* p, size_t sz, uint ba = 0, const TypeInfo ti = null) pure nothrow;
 
     // https://issues.dlang.org/show_bug.cgi?id=13111
     ///
@@ -675,18 +675,16 @@ extern(D):
      * Returns:
      *  The base address of the memory block referenced by p or null on error.
      */
-    static inout(void)* addrOf( inout(void)* p ) nothrow @nogc /* FIXME pure */
+    static inout(void)* addrOf( inout(void)* p ) nothrow @nogc pure @trusted
     {
         return cast(inout(void)*)gc_addrOf(cast(void*)p);
     }
 
-
     /// ditto
-    static void* addrOf(void* p) pure nothrow @nogc
+    static void* addrOf(void* p) pure nothrow @nogc @trusted
     {
         return gc_addrOf(p);
     }
-
 
     /**
      * Returns the true size of the memory block referenced by p.  This value
@@ -739,14 +737,14 @@ extern(D):
      *  Information regarding the memory block referenced by p or BlkInfo.init
      *  on error.
      */
-    static BlkInfo query( const scope void* p ) nothrow
+    static BlkInfo query(return scope const void* p) nothrow
     {
         return gc_query(cast(void*)p);
     }
 
 
     /// ditto
-    static BlkInfo query(void* p) pure nothrow
+    static BlkInfo query(return scope void* p) pure nothrow
     {
         return gc_query( p );
     }
@@ -1253,12 +1251,12 @@ void __delete(T)(ref T x) @system
               is(T == class) ||
               is(T == U2*, U2))
     {
-        GC.free(cast(void*) x);
+        GC.free(GC.addrOf(cast(void*) x));
         x = null;
     }
     else static if (is(T : E2[], E2))
     {
-        GC.free(cast(void*) x.ptr);
+        GC.free(GC.addrOf(cast(void*) x.ptr));
         x = null;
     }
 }

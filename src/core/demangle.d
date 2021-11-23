@@ -641,6 +641,7 @@ pure @safe:
         TypeDelegate
         TypeNone
         TypeVoid
+        TypeNoreturn
         TypeByte
         TypeUbyte
         TypeShort
@@ -719,6 +720,9 @@ pure @safe:
 
     TypeVoid:
         v
+
+    TypeNoreturn
+        Nn
 
     TypeByte:
         g
@@ -878,6 +882,10 @@ pure @safe:
             popFront();
             switch ( front )
             {
+            case 'n': // Noreturn
+                popFront();
+                put("noreturn");
+                return dst[beg .. len];
             case 'g': // Wild (Ng Type)
                 popFront();
                 // TODO: Anything needed here?
@@ -1169,9 +1177,11 @@ pure @safe:
             case 'g':
             case 'h':
             case 'k':
+            case 'n':
                 // NOTE: The inout parameter type is represented as "Ng".
                 //       The vector parameter type is represented as "Nh".
                 //       The return parameter type is represented as "Nk".
+                //       The noreturn parameter type is represented as "Nn".
                 //       These make it look like a FuncAttr, but infact
                 //       if we see these, then we know we're really in
                 //       the parameter list.  Rewind and break.
@@ -2045,7 +2055,7 @@ pure @safe:
  *  The demangled name or the original string if the name is not a mangled D
  *  name.
  */
-char[] demangle( size_t checkDstSize = 0 )( const(char)[] buf, char[] dst = null ) nothrow pure @safe
+char[] demangle(size_t checkDstSize = 0)(return scope const(char)[] buf, return scope char[] dst = null ) nothrow pure @safe
 {
     auto d = Demangle!(NoHooks, checkDstSize)(buf, dst);
     // fast path (avoiding throwing & catching exception) for obvious
@@ -2084,7 +2094,7 @@ char[] demangleType( const(char)[] buf, char[] dst = null ) nothrow pure @safe
 * Returns:
 *  The mangled name with deduplicated identifiers
 */
-char[] reencodeMangled(const(char)[] mangled) nothrow pure @safe
+char[] reencodeMangled(return scope const(char)[] mangled) nothrow pure @safe
 {
     static struct PrependHooks
     {
@@ -2256,7 +2266,7 @@ char[] reencodeMangled(const(char)[] mangled) nothrow pure @safe
  *  The mangled name for a symbols of type T and the given fully
  *  qualified name.
  */
-char[] mangle(T)(const(char)[] fqn, char[] dst = null) @safe pure nothrow
+char[] mangle(T)(return scope const(char)[] fqn, return scope char[] dst = null) @safe pure nothrow
 {
     import core.internal.string : numDigits, unsignedToTempString;
 
@@ -2273,13 +2283,13 @@ char[] mangle(T)(const(char)[] fqn, char[] dst = null) @safe pure nothrow
             return i == -1 ? s[0 .. $] : s[0 .. i];
         }
 
-        void popFront()
+        void popFront() scope
         {
             immutable i = indexOfDot();
             s = i == -1 ? s[$ .. $] : s[i+1 .. $];
         }
 
-        private ptrdiff_t indexOfDot() const
+        private ptrdiff_t indexOfDot() const scope
         {
             foreach (i, c; s) if (c == '.') return i;
             return -1;
@@ -2346,7 +2356,7 @@ char[] mangle(T)(const(char)[] fqn, char[] dst = null) @safe pure nothrow
  *  The mangled name for a function with function pointer type T and
  *  the given fully qualified name.
  */
-char[] mangleFunc(T:FT*, FT)(const(char)[] fqn, char[] dst = null) @safe pure nothrow if (is(FT == function))
+char[] mangleFunc(T:FT*, FT)(return scope const(char)[] fqn, return scope char[] dst = null) @safe pure nothrow if (is(FT == function))
 {
     static if (isExternD!FT)
     {
@@ -2621,7 +2631,8 @@ unittest
     {
         char[] buf = new char[i];
         auto ds = demangle(s, buf);
-        assert(ds == "pure nothrow @safe char[] core.demangle.demangle(const(char)[], char[])");
+        assert(ds == "pure nothrow @safe char[] core.demangle.demangle(scope return const(char)[], scope return char[])" ||
+               ds == "pure nothrow @safe char[] core.demangle.demangle(return scope const(char)[], return scope char[])");
     }
 }
 
@@ -2639,6 +2650,32 @@ unittest
     s ~= "FiZi";
     expected ~= "F";
     assert(s.demangle == expected);
+}
+
+// https://issues.dlang.org/show_bug.cgi?id=22235
+unittest
+{
+    enum parent = __MODULE__ ~ '.' ~ __traits(identifier, __traits(parent, {}));
+
+    static noreturn abort() { assert(false); }
+    assert(demangle(abort.mangleof) == "pure nothrow @nogc @safe noreturn " ~ parent ~ "().abort()");
+
+    version (LDC)
+    {
+        // FIXME: https://github.com/ldc-developers/ldc/issues/3853
+    }
+    else
+    {
+        static void accept(noreturn) {}
+        assert(demangle(accept.mangleof) == "pure nothrow @nogc @safe void " ~ parent ~ "().accept(noreturn)");
+
+        static void templ(T)(T, T) {}
+        assert(demangle(templ!noreturn.mangleof) == "pure nothrow @nogc @safe void " ~ parent ~ "().templ!(noreturn).templ(noreturn, noreturn)");
+    }
+
+    static struct S(T) {}
+    static void aggr(S!noreturn) { assert(0); }
+    assert(demangle(aggr.mangleof) == "pure nothrow @nogc @safe void " ~ parent ~ "().aggr(" ~ parent ~ "().S!(noreturn).S)");
 }
 
 /*

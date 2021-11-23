@@ -10,11 +10,10 @@
 
 module core.internal.atomic;
 
-import core.atomic : MemoryOrder;
+import core.atomic : MemoryOrder, has128BitCAS;
 
 version (LDC)
 {
-    import core.atomic : has128BitCAS;
     import ldc.intrinsics;
 
     pragma(inline, true):
@@ -91,7 +90,41 @@ version (LDC)
 
     void pause() pure nothrow @nogc @trusted
     {
-        // LDC: TODO?
+        version (X86)
+            enum inst = "pause";
+        else version (X86_64)
+            enum inst = "pause";
+        else version (ARM)
+        {
+            // requires v6k+ (e.g., -mtriple=armv6k-linux-gnueabihf)
+            static if (__traits(targetHasFeature, "v6k"))
+                enum inst = "yield";
+            else
+                enum inst = null;
+        }
+        else version (AArch64)
+            enum inst = "yield";
+        else version (MIPS32)
+        {
+            // requires ISA r2+ (e.g., -mcpu=mips32r2)
+            static if (__traits(targetHasFeature, "mips32r2"))
+                enum inst = "pause";
+            else
+                enum inst = null;
+        }
+        else version (MIPS64)
+        {
+            // requires ISA r2+ (e.g., -mcpu=mips64r2)
+            static if (__traits(targetHasFeature, "mips64r2"))
+                enum inst = "pause";
+            else
+                enum inst = null;
+        }
+        else
+            enum inst = null; // TODO?
+
+        static if (inst !is null)
+            asm pure nothrow @nogc @trusted { (inst); }
     }
 
     template _ordering(MemoryOrder ms)
@@ -1194,8 +1227,9 @@ enum CanCAS(T) = is(T : ulong) ||
                  is(T : U[], U) ||
                  is(T : R delegate(A), R, A...) ||
                  (is(T == struct) && __traits(isPOD, T) &&
-                  T.sizeof <= size_t.sizeof*2 && // no more than 2 words
-                  (T.sizeof & (T.sizeof - 1)) == 0 // is power of 2
+                  (T.sizeof <= size_t.sizeof*2 ||       // no more than 2 words
+                   (T.sizeof == 16 && has128BitCAS)) && // or supports 128-bit CAS
+                  (T.sizeof & (T.sizeof - 1)) == 0      // is power of 2
                  );
 
 template IntOrLong(T)
