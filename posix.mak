@@ -382,7 +382,8 @@ HAS_ADDITIONAL_TESTS:=$(shell test -d test && echo 1)
 ifeq ($(HAS_ADDITIONAL_TESTS),1)
 	ADDITIONAL_TESTS:=test/init_fini test/exceptions test/coverage test/profile test/cycles test/allocations test/typeinfo \
 	    test/aa test/cpuid test/gc test/hash test/lifetime \
-	    test/thread test/unittest test/imports test/betterc test/stdcpp test/config
+	    test/thread test/unittest test/imports test/betterc test/stdcpp test/config \
+	    test/traits
 	ADDITIONAL_TESTS+=$(if $(SHARED),test/shared,)
 endif
 
@@ -402,11 +403,7 @@ ifeq ($(OS),linux)
   endif
 endif
 
-ifeq ($(OS),freebsd)
 DISABLED_TESTS =
-else
-DISABLED_TESTS =
-endif
 
 $(addprefix $(ROOT)/unittest/,$(DISABLED_TESTS)) :
 	@echo $@ - disabled
