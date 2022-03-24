@@ -87,17 +87,24 @@ arm_unwind = declare_dependency(
     sources: ['src/ldc/arm_unwind.c'],
 )
 
-druntime_dep = declare_dependency(
-    sources: [src, ldc_specific],
-    include_directories: include_directories('src'),
-    d_module_versions: [
+use_external_backend = get_option('use_external_backend')
+external_backend_D_versions = []
+
+if use_external_backend
+    external_backend_D_versions += [
         'DruntimeAbstractRt',
         'CRuntime_Abstract',
         'AsmExternal', #used by fiber module
         #'CoreUnittest',
         'OnlyLowMemUnittest', #disables memory-greedy unittests
         #'SupportSanitizers', #FIXME: remove, for debugging purposes only
-    ],
+    ]
+endif
+
+druntime_dep = declare_dependency(
+    sources: [src, ldc_specific],
+    include_directories: include_directories('src'),
+    d_module_versions: external_backend_D_versions,
     dependencies: [
         arm_unwind,
     ],
